@@ -1,0 +1,50 @@
+﻿
+# feature demonstration
+
+events:
+  event_name: # event name, needs to be the same as in api
+    intensity: 50 # [0-100]
+    duration: 5 # seconds, decimal values with 1 decimal place are allowed
+  # setting intensity to 0 will stop vibrations 
+  # setting duration to 0 will make the vibration last forever (5 minutes) or until an event with 0 intensity is sent, useful for games that you need to be revived
+  
+  event_name2:
+    intensity: 80
+    duration: 5
+    condition: "value == true" # optional, this expression need to return a boolean
+    # every expressions need to be written in C# syntax 
+    
+    intensity_modifier: [ # optional
+      {
+        condition: "value == \"A\" || value == \"B\"", # you can use boolean algebra
+        expression: "value * 2.5", # this expression need to return an int or double
+        min: 0, # [0-100]. optional (0 is default), set a min to the expression
+        max: 100, # [0-100]. optional (100 is default), set a max to the expression
+        break: true, # [true, false] optional only checked if condition exist
+        # every modifier will be added together until one is break
+        override: true # [true, false] optional only checked if condition exist
+        # will override every previous modifier
+      },
+      # repeat to add more modifiers
+      # each modifier will be done in order (top to bottom)
+      # the way you write your expressions is important, as well as which option you enable
+      {
+        condition: "value.count > 0", # you can read multiple keys (check in the specific game api)
+        expression: "value * 2.5", # this expression need to return an int or double
+      },
+    ]
+    duration_modifier: [ # optional
+      {
+        condition: "true", # you can directly input true/false, useful for testing
+        expression: 10, # you can set the expression to a constant
+        min: 0.1, # seconds, decimal values with 1 decimal place are allowed. optional (0.1 is default), set a min to the expression
+        # setting min duration to 0 will make the vibration last forever (5 minutes) or until an event with 0 intensity is sent
+        max: 300, # seconds, decimal values with 1 decimal place are allowed. optional (300 is default), set a max to the expression
+        break: true, # [true, false] optional only checked if condition exist
+        # every modifier will be added together until one is break
+        override: true # [true, false] optional only checked if condition exist
+        # will override every previous modifier
+      },
+      # repeat to add more modifiers
+      # same as intensity modifier
+    ]

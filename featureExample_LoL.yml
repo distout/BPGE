@@ -1,0 +1,51 @@
+﻿
+# example with League of Legends' api
+
+events:
+  # vibrate for 5 seconds at 50 intensity only if it's an enemy tower that is destroyed
+  turret_destroy:
+    intensity: 50
+    duration: 5
+    condition: "value == \"enemy\""
+  
+  # vibrate for 0.2 seconds when dealing damage but intensity range from 1 to 50 based off damage from 10- to 500+ 
+  physical_damage_dealt_to_champions:
+    intensity: 10
+    duration: 0.2
+    intensity_modifier:
+      expression: "intensity * value / 100.0",
+      min: 1,
+      max: 50
+  
+  # vibrate for different values depending on the killing streak
+  kill:
+    intensity: 50
+    duration: 5
+    intensity_modifier: [
+      {
+        condition: "value.label == \"penta_kill\"",
+        expression: 100,
+        break: true
+      },
+      {
+        condition: "value.label == \"quadra_kill\"",
+        expression: 85,
+        break: true
+      },
+      {
+        condition: "value.label == \"double_kill\" || value.label == \"triple_kill\"",
+        expression: 70
+      }
+    ]
+    duration_modifier: [
+      {
+        condition: "value.label == \"penta_kill\"",
+        expression: 20,
+        break: true
+      },
+      {
+        condition: "value.label == \"triple_kill\" || value.label == \"quadra_kill\"",
+        expression: 10
+      }
+    ]
+    
