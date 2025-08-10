@@ -3,13 +3,55 @@ using Buttplug.Client.Connectors.WebsocketConnector;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using Timer = System.Timers.Timer;
+using NCalc;
+using YamlDotNet.Core;
+using YamlDotNet.Core.Events;
 
 namespace BPGE;
+
+
+public class YamlConverterNCalcExpression : IYamlTypeConverter
+{
+    public bool Accepts(Type type)
+    {
+        return type == typeof(Expression);
+    }
+
+    public object? ReadYaml(IParser parser, Type type)
+    {
+        var scalar = parser.Consume<Scalar>();
+        return new Expression(scalar.Value);
+    }
+
+    public void WriteYaml(IEmitter emitter, object? value, Type type)
+    {
+        var expression = (Expression)value!;
+        emitter.Emit(new Scalar(expression.ExpressionString!));
+    }
+}
+
+public class EventModifier
+{
+    public Expression Condition { get; set; }
+    
+    public Expression Expression { get; set; }
+    
+    public float Min { get; set; }
+    public float Max { get; set; }
+    
+    public bool Break { get; set; }
+    public bool Override { get; set; }
+}
 
 public class EventConfig
 {
     public int Intensity { get; set; }
     public double Duration { get; set; }
+    
+    public Expression Condition { get; set; }
+    
+    public EventModifier[] IntensityModifier { get; set; }
+    public EventModifier[] DurationModifier  { get; set; }
 }
 public class GameConfig
 {
@@ -46,8 +88,11 @@ public class VibrationManager
     
     private static GameConfig GetGameConfig(string fileName)
     {
-        return new DeserializerBuilder().WithNamingConvention(CamelCaseNamingConvention.Instance)
-            .Build().Deserialize<GameConfig>(File.ReadAllText(GetFilePath(fileName)));
+        return new DeserializerBuilder()
+            .WithNamingConvention(UnderscoredNamingConvention.Instance)
+            .WithTypeConverter(new YamlConverterNCalcExpression())
+            .Build()
+            .Deserialize<GameConfig>(File.ReadAllText(GetFilePath(fileName)));
     } 
     
     private void ResetConfig()
@@ -74,6 +119,12 @@ public class VibrationManager
             foreach (var (key, value) in globalConfig.Events)
             {
                 _intensities.Add(key, value);
+                if (value.Condition?.ExpressionString != null)
+                    _bpgeView.LogDebug(value.Condition.ExpressionString);
+                else if (value.Condition != null)
+                    _bpgeView.LogDebug("empty expression string");
+                else    
+                    _bpgeView.LogDebug("Condition is null");
             }
 
             return true;
@@ -223,6 +274,7 @@ public class VibrationManager
                     if (!_intensities.ContainsKey(ev.name.ToString())) continue;
                     EventConfig eventConfig = _intensities[ev.name.ToString()];
                     _bpgeView.LogInfo($"Game: {item.gameName} Event: {ev.name} Intensity: {eventConfig.Intensity}% Duration: {eventConfig.Duration}s");
+                    // TODO: add condition checks and modifiers
                     AddToArray(CurrentIndex(), eventConfig.Intensity, eventConfig.Duration);
                 }
             }
