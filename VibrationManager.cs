@@ -4,6 +4,7 @@ using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using Timer = System.Timers.Timer;
 using NCalc;
+using NCalc.Handlers;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 
@@ -20,9 +21,34 @@ public class YamlConverterNCalcExpression : IYamlTypeConverter
     public object? ReadYaml(IParser parser, Type type)
     {
         var scalar = parser.Consume<Scalar>();
-        return new Expression(scalar.Value);
+        Expression expr = new Expression(scalar.Value);
+        expr.EvaluateParameter += (string name, ParameterArgs args) =>
+        {
+            if (name.Contains("."))
+            {
+                var parts = name.Split(".");
+                var current = expr.Parameters[parts[0]];
+
+                for (int i = 1; i < parts.Length && current != null; i++)
+                {
+                    var dyn = current as dynamic;
+                    if (dyn != null)
+                        current = ((dynamic)current)[parts[i]];
+                    else
+                        current = null;
+                }
+                
+                args.Result = current;
+            }
+            else if (expr.Parameters.TryGetValue(name, out var parameter))
+            {
+                args.Result = parameter;
+            }
+        };
+        return expr;
     }
 
+    // Not used, will need work to be uses
     public void WriteYaml(IEmitter emitter, object? value, Type type)
     {
         var expression = (Expression)value!;
@@ -119,12 +145,6 @@ public class VibrationManager
             foreach (var (key, value) in globalConfig.Events)
             {
                 _intensities.Add(key, value);
-                if (value.Condition?.ExpressionString != null)
-                    _bpgeView.LogDebug(value.Condition.ExpressionString);
-                else if (value.Condition != null)
-                    _bpgeView.LogDebug("empty expression string");
-                else    
-                    _bpgeView.LogDebug("Condition is null");
             }
 
             return true;
@@ -273,9 +293,18 @@ public class VibrationManager
                 {
                     if (!_intensities.ContainsKey(ev.name.ToString())) continue;
                     EventConfig eventConfig = _intensities[ev.name.ToString()];
-                    _bpgeView.LogInfo($"Game: {item.gameName} Event: {ev.name} Intensity: {eventConfig.Intensity}% Duration: {eventConfig.Duration}s");
-                    // TODO: add condition checks and modifiers
-                    AddToArray(CurrentIndex(), eventConfig.Intensity, eventConfig.Duration);
+
+                    // TODO: add modifiers
+                    if (eventConfig.Condition != null)
+                    {
+                        eventConfig.Condition.Parameters["value"] = ev.data;
+                    }
+
+                    if (eventConfig.Condition == null || (bool)eventConfig.Condition.Evaluate()!)
+                    {
+                        _bpgeView.LogInfo($"Game: {item.gameName} Event: {ev.name} Intensity: {eventConfig.Intensity}% Duration: {eventConfig.Duration}s");
+                        AddToArray(CurrentIndex(), eventConfig.Intensity, eventConfig.Duration);
+                    }
                 }
             }
         }

@@ -23,7 +23,7 @@
                 .WithParsed<Options>(o =>
                 {
                     Application.Init();
-                    o.Debug = true; // TODO: Remove
+                    //o.Debug = true; // TODO: Remove
                     var bpge = new BPGEView(o.Debug, o.IntifacePort, o.IntifaceIP);
 
                     try
