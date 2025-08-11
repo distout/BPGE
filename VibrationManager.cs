@@ -1,15 +1,18 @@
-﻿using Buttplug.Client;
+﻿using System.Text.Json;
+using Buttplug.Client;
 using Buttplug.Client.Connectors.WebsocketConnector;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using Timer = System.Timers.Timer;
 using NCalc;
 using NCalc.Handlers;
+using Newtonsoft.Json.Linq;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 
 namespace BPGE;
 
+// TODO: some kind of error catcher
 
 public class YamlConverterNCalcExpression : IYamlTypeConverter
 {
@@ -29,21 +32,46 @@ public class YamlConverterNCalcExpression : IYamlTypeConverter
                 var parts = name.Split(".");
                 var current = expr.Parameters[parts[0]];
 
+                // TODO: clean and remove what can't be a case
                 for (int i = 1; i < parts.Length && current != null; i++)
                 {
-                    var dyn = current as dynamic;
-                    if (dyn != null)
-                        current = ((dynamic)current)[parts[i]];
-                    else
-                        current = null;
+                    switch (current)
+                    {
+                        case JObject jo:
+                            current = jo[parts[i]];
+                            break;
+                        case JValue jv:
+                            current = jv.Value;
+                            break;
+                        case IDictionary<string, object> dict when dict.ContainsKey(parts[i]):
+                            current = dict[parts[i]];
+                            break;
+                        default:
+                        {
+                            //var dyn = current as dynamic;
+                            //if (dyn != null)
+                            if (current is dynamic)
+                                current = ((dynamic)current)[parts[i]];
+                            else
+                                current = null;
+                            break;
+                        }
+                    }
                 }
                 
-                args.Result = current;
+                if (current is JValue jv2)
+                    args.Result = jv2.Value;
+                else
+                    args.Result = current;
             }
             else if (expr.Parameters.TryGetValue(name, out var parameter))
             {
-                args.Result = parameter;
+                if (parameter is JValue jv)
+                    args.Result = jv.Value;
+                else
+                    args.Result = parameter;
             }
+                
         };
         return expr;
     }
@@ -58,12 +86,74 @@ public class YamlConverterNCalcExpression : IYamlTypeConverter
 
 public class EventModifier
 {
+    public enum ModiferMode
+    {
+        none,
+        intensity,
+        duration
+    }
+
+    public ModiferMode Mode;
     public Expression Condition { get; set; }
+    public bool CheckCondition(dynamic dataValue, int intensity, double duration)
+    {
+        if (Mode == ModiferMode.none)
+            return false;
+        
+        if (Condition != null)
+        {
+            if (dataValue is JObject jo)
+                Condition.Parameters["value"] = jo;
+            else if (dataValue is JValue jv)
+                Condition.Parameters["value"] = jv;
+            else
+                Condition.Parameters["value"] = dataValue;
+            Condition.Parameters["intensity"] = intensity;
+            Condition.Parameters["duration"] = duration;
+        }
+        
+        return Condition == null || (bool)Condition.Evaluate()!;
+    }
     
     public Expression Expression { get; set; }
+    public double EvaluateModifier(dynamic dataValue, int intensity, double duration)
+    {
+        if (dataValue is JObject jo)
+            Expression.Parameters["value"] = jo;
+        else if (dataValue is JValue jv)
+            Expression.Parameters["value"] = jv;
+        else
+            Condition.Parameters["value"] = dataValue;
+        Expression.Parameters["intensity"] = intensity;
+        Expression.Parameters["duration"] = duration;
+
+        double result = -1;
+        if (Mode == ModiferMode.intensity)  
+        {
+            // TODO: add config for min and max variable (to avoid hardcoding default values)
+            if (Min == -1) Min = 0;
+            else Min = Math.Clamp(Min, 0, 100);
+            if (Max == -1) Max = 100;
+            else Max = Math.Clamp(Max, 0, 100);
+            result = intensity;
+        }
+        else if (Mode == ModiferMode.duration)
+        {
+            if (Min == -1) Min = 0.1;
+            else Min = Math.Clamp(Min, 0, 300);
+            if (Max == -1) Max = 300;
+            else Max = Math.Clamp(Max, 0, 300);
+            result = duration;
+        }
+            
+        result = Convert.ToDouble(Expression.Evaluate());
+        result = Math.Clamp(result, Min, Max);
+
+        return result;
+    }
     
-    public float Min { get; set; }
-    public float Max { get; set; }
+    public double Min { get; set; } = -1;
+    public double Max { get; set; } = -1;
     
     public bool Break { get; set; }
     public bool Override { get; set; }
@@ -74,10 +164,66 @@ public class EventConfig
     public int Intensity { get; set; }
     public double Duration { get; set; }
     
-    public Expression Condition { get; set; }
+    // print the full Json Event (with 'data') if one of it's name is detected
+    public bool Print { get; set; }
     
-    public EventModifier[] IntensityModifier { get; set; }
-    public EventModifier[] DurationModifier  { get; set; }
+    public Expression Condition { get; set; }
+
+    public bool CheckCondition(dynamic dataValue)
+    {
+        if (Condition != null)
+        {
+            if (dataValue is JObject jo)
+                Condition.Parameters["value"] = jo;
+            else if (dataValue is JValue jv)
+                Condition.Parameters["value"] = jv;
+            else
+                Condition.Parameters["value"] = dataValue;
+            Condition.Parameters["duration"] = Duration;
+            Condition.Parameters["intensity"] = Intensity;
+        }
+
+        return Condition == null || (bool)Condition.Evaluate()!;
+    }
+    
+    public EventModifier[] Modifier { get; set; }
+
+    // return number of modifier applied
+    public int EvaluateAllModifiers(dynamic dataValue, out int newIntensity, out double newDuration)
+    {
+        newIntensity = Intensity;
+        newDuration = Duration;
+        
+        if (Modifier == null) return 0;
+            
+        int modifierUsed = 0;
+        foreach (EventModifier modif in Modifier)
+        {
+            if (!modif.CheckCondition(dataValue, newIntensity, newDuration)) continue;
+            if (modif.Mode == EventModifier.ModiferMode.none) continue;
+
+            if (modif.Mode == EventModifier.ModiferMode.intensity)
+            {
+                if (modif.Override)
+                    newIntensity = Intensity;
+                            
+                newIntensity = (int)modif.EvaluateModifier(dataValue, newIntensity, newDuration);
+                modifierUsed++;
+            }
+            else if (modif.Mode == EventModifier.ModiferMode.duration)
+            {
+                if (modif.Override)
+                    newDuration = Duration;
+                            
+                newDuration = (int)modif.EvaluateModifier(dataValue, newIntensity, newDuration);
+                modifierUsed++;
+            }
+            
+            if (modif.Break)
+                break;
+        }
+        return modifierUsed;
+    }
 }
 public class GameConfig
 {
@@ -294,17 +440,17 @@ public class VibrationManager
                     if (!_intensities.ContainsKey(ev.name.ToString())) continue;
                     EventConfig eventConfig = _intensities[ev.name.ToString()];
 
-                    // TODO: add modifiers
-                    if (eventConfig.Condition != null)
-                    {
-                        eventConfig.Condition.Parameters["value"] = ev.data;
-                    }
-
-                    if (eventConfig.Condition == null || (bool)eventConfig.Condition.Evaluate()!)
-                    {
-                        _bpgeView.LogInfo($"Game: {item.gameName} Event: {ev.name} Intensity: {eventConfig.Intensity}% Duration: {eventConfig.Duration}s");
-                        AddToArray(CurrentIndex(), eventConfig.Intensity, eventConfig.Duration);
-                    }
+                    if (eventConfig.Print)
+                        _bpgeView.LogInfo($"[PRINT] Event: {ev.name} {ev.data}");
+                    
+                    if (!eventConfig.CheckCondition(ev.data)) continue;
+                    
+                    int modifiedIntensity = eventConfig.Intensity;
+                    double modifiedDuration = eventConfig.Duration;
+                    int modifierUsed = eventConfig.EvaluateAllModifiers(ev.data, out modifiedIntensity, out modifiedDuration);
+                    
+                    _bpgeView.LogInfo($"Game: {item.gameName} Event: {ev.name} Intensity: {modifiedIntensity}% Duration: {modifiedDuration}s" + (modifierUsed > 0 ? $" Modifier Used: {modifierUsed}" : ""));
+                    AddToArray(CurrentIndex(), modifiedIntensity, modifiedDuration);
                 }
             }
         }
