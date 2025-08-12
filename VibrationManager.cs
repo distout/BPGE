@@ -71,7 +71,6 @@ public class YamlConverterNCalcExpression : IYamlTypeConverter
                 else
                     args.Result = parameter;
             }
-                
         };
         return expr;
     }
@@ -86,20 +85,9 @@ public class YamlConverterNCalcExpression : IYamlTypeConverter
 
 public class EventModifier
 {
-    public enum ModiferMode
-    {
-        none,
-        intensity,
-        duration
-    }
-
-    public ModiferMode Mode;
     public Expression Condition { get; set; }
     public bool CheckCondition(dynamic dataValue, int intensity, double duration)
     {
-        if (Mode == ModiferMode.none)
-            return false;
-        
         if (Condition != null)
         {
             if (dataValue is JObject jo)
@@ -115,54 +103,87 @@ public class EventModifier
         return Condition == null || (bool)Condition.Evaluate()!;
     }
     
-    public Expression Expression { get; set; }
-    public double EvaluateModifier(dynamic dataValue, int intensity, double duration)
-    {
-        if (dataValue is JObject jo)
-            Expression.Parameters["value"] = jo;
-        else if (dataValue is JValue jv)
-            Expression.Parameters["value"] = jv;
-        else
-            Condition.Parameters["value"] = dataValue;
-        Expression.Parameters["intensity"] = intensity;
-        Expression.Parameters["duration"] = duration;
+    public Expression Intensity { get; set; }
+    public Expression Duration { get; set; }
 
-        double result = -1;
-        if (Mode == ModiferMode.intensity)  
+    public int EvaluateIntensity(dynamic dataValue, int intensity, double duration)
+    {
+        int output = (int)EvaluateExpression(Intensity, dataValue, intensity, duration);
+
+        // TODO: add config for min and max variable (to avoid hardcoding default values)
+        IntensityMin = Math.Clamp(IntensityMin, 0, 100);
+        IntensityMax = Math.Clamp(IntensityMax, 0, 100);
+        
+        return Math.Clamp(output, IntensityMin, IntensityMax);
+    }
+    public double EvaluateDuration(dynamic dataValue, int intensity, double duration)
+    {
+        double output = EvaluateExpression(Duration, dataValue, intensity, duration);
+        
+        // TODO: add config for min and max variable (to avoid hardcoding default values)
+        DurationMin = Math.Clamp(DurationMin, 0, 300);
+        DurationMax = Math.Clamp(DurationMax, 0, 300);
+        
+        return Math.Clamp(output, IntensityMin, IntensityMax);
+    }
+    private double EvaluateExpression(Expression expression, dynamic dataValue, int intensity, double duration)
+    {
+        expression.Parameters["value"] = dataValue switch
         {
-            // TODO: add config for min and max variable (to avoid hardcoding default values)
-            if (Min == -1) Min = 0;
-            else Min = Math.Clamp(Min, 0, 100);
-            if (Max == -1) Max = 100;
-            else Max = Math.Clamp(Max, 0, 100);
-            result = intensity;
-        }
-        else if (Mode == ModiferMode.duration)
-        {
-            if (Min == -1) Min = 0.1;
-            else Min = Math.Clamp(Min, 0, 300);
-            if (Max == -1) Max = 300;
-            else Max = Math.Clamp(Max, 0, 300);
-            result = duration;
-        }
-            
-        result = Convert.ToDouble(Expression.Evaluate());
-        result = Math.Clamp(result, Min, Max);
+            JObject jo => jo,
+            JValue jv => jv,
+            _ => dataValue
+        };;
+        expression.Parameters["intensity"] = intensity;
+        expression.Parameters["duration"] = duration;
+        
+        double result = Convert.ToDouble(expression.Evaluate());
 
         return result;
     }
     
-    public double Min { get; set; } = -1;
-    public double Max { get; set; } = -1;
+    public int IntensityMin { get; set; } = 0;
+    public int IntensityMax { get; set; } = 100;
+    
+    public double DurationMin { get; set; } = 0.1;
+    public double DurationMax { get; set; } = 300;
     
     public bool Break { get; set; }
-    public bool Override { get; set; }
 }
 
 public class EventConfig
 {
-    public int Intensity { get; set; }
-    public double Duration { get; set; }
+    public Expression Intensity { get; set; }
+    public Expression Duration { get; set; }
+    
+    public int EvaluateIntensity(dynamic dataValue)
+    {
+        int output = (int)EvaluateExpression(Intensity, dataValue);
+
+        // TODO: add config for min and max variable (to avoid hardcoding default values)
+        return Math.Clamp(output, 0, 100);
+    }
+    public double EvaluateDuration(dynamic dataValue)
+    {
+        double output = EvaluateExpression(Duration, dataValue);
+        
+        // TODO: add config for min and max variable (to avoid hardcoding default values)
+        return Math.Clamp(output, 0, 300);
+    }
+    private double EvaluateExpression(Expression expression, dynamic dataValue)
+    {
+        expression.Parameters["value"] = dataValue switch
+        {
+            JObject jo => jo,
+            JValue jv => jv,
+            _ => dataValue
+        };
+        
+        // TODO: throw user error if Expression cannot compute
+        double result = Convert.ToDouble(expression.Evaluate());
+
+        return result;
+    }
     
     // print the full Json Event (with 'data') if one of it's name is detected
     public bool Print { get; set; }
@@ -173,14 +194,14 @@ public class EventConfig
     {
         if (Condition != null)
         {
-            if (dataValue is JObject jo)
-                Condition.Parameters["value"] = jo;
-            else if (dataValue is JValue jv)
-                Condition.Parameters["value"] = jv;
-            else
-                Condition.Parameters["value"] = dataValue;
-            Condition.Parameters["duration"] = Duration;
-            Condition.Parameters["intensity"] = Intensity;
+            Condition.Parameters["value"] = dataValue switch
+            {
+                JObject jo => jo,
+                JValue jv => jv,
+                _ => dataValue
+            };
+            Condition.Parameters["intensity"] = EvaluateIntensity(dataValue);
+            Condition.Parameters["duration"] = EvaluateDuration(dataValue);
         }
 
         return Condition == null || (bool)Condition.Evaluate()!;
@@ -189,37 +210,33 @@ public class EventConfig
     public EventModifier[] Modifier { get; set; }
 
     // return number of modifier applied
-    public int EvaluateAllModifiers(dynamic dataValue, out int newIntensity, out double newDuration)
+    public int EvaluateWithAllModifiers(dynamic dataValue, out int newIntensity, out double newDuration)
     {
-        newIntensity = Intensity;
-        newDuration = Duration;
+        newIntensity = EvaluateIntensity(dataValue);
+        newDuration = EvaluateDuration(dataValue);
         
         if (Modifier == null) return 0;
             
         int modifierUsed = 0;
-        foreach (EventModifier modif in Modifier)
+        foreach (EventModifier modifier in Modifier)
         {
-            if (!modif.CheckCondition(dataValue, newIntensity, newDuration)) continue;
-            if (modif.Mode == EventModifier.ModiferMode.none) continue;
+            if (modifier.Intensity == null && modifier.Duration == null) continue;
+            if (!modifier.CheckCondition(dataValue, newIntensity, newDuration)) continue;
 
-            if (modif.Mode == EventModifier.ModiferMode.intensity)
-            {
-                if (modif.Override)
-                    newIntensity = Intensity;
-                            
-                newIntensity = (int)modif.EvaluateModifier(dataValue, newIntensity, newDuration);
-                modifierUsed++;
-            }
-            else if (modif.Mode == EventModifier.ModiferMode.duration)
-            {
-                if (modif.Override)
-                    newDuration = Duration;
-                            
-                newDuration = (int)modif.EvaluateModifier(dataValue, newIntensity, newDuration);
-                modifierUsed++;
-            }
+            int tempIntensity = newIntensity;
+            double tempDuration = newDuration;
             
-            if (modif.Break)
+            if (modifier.Intensity != null)
+                tempIntensity = modifier.EvaluateIntensity(dataValue, newIntensity, newDuration);
+            if (modifier.Duration != null)
+                tempDuration = modifier.EvaluateDuration(dataValue, newIntensity, newDuration);
+            
+            newIntensity = tempIntensity;
+            newDuration = tempDuration;
+            
+            modifierUsed++;
+            
+            if (modifier.Condition != null && modifier.Break)
                 break;
         }
         return modifierUsed;
@@ -430,7 +447,7 @@ public class VibrationManager
                 _bpgeView.LogDebug("Current config:");
                 foreach (KeyValuePair<string, EventConfig> kvp in _intensities)
                 {
-                    _bpgeView.LogDebug($"Event: {kvp.Key} Intensity: {kvp.Value.Intensity}% Duration: {kvp.Value.Duration}s");
+                    _bpgeView.LogDebug($"Event: {kvp.Key} Intensity: {kvp.Value.Intensity.ExpressionString}% Duration: {kvp.Value.Duration.ExpressionString}s");
                 }
             }
             if (item.type == "event")
@@ -445,9 +462,7 @@ public class VibrationManager
                     
                     if (!eventConfig.CheckCondition(ev.data)) continue;
                     
-                    int modifiedIntensity = eventConfig.Intensity;
-                    double modifiedDuration = eventConfig.Duration;
-                    int modifierUsed = eventConfig.EvaluateAllModifiers(ev.data, out modifiedIntensity, out modifiedDuration);
+                    int modifierUsed = eventConfig.EvaluateWithAllModifiers(ev.data, out int modifiedIntensity, out double modifiedDuration);
                     
                     _bpgeView.LogInfo($"Game: {item.gameName} Event: {ev.name} Intensity: {modifiedIntensity}% Duration: {modifiedDuration}s" + (modifierUsed > 0 ? $" Modifier Used: {modifierUsed}" : ""));
                     AddToArray(CurrentIndex(), modifiedIntensity, modifiedDuration);

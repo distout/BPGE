@@ -14,9 +14,9 @@ events:
     duration: 0.2
     intensity_modifier: [
       {
-        expression: "intensity * value / 100.0",
-        min: 1,
-        max: 50
+        intensity: "intensity * value / 100.0",
+        intensity_min: 1,
+        intensity_max: 50
       }
     ]
   
@@ -27,28 +27,26 @@ events:
     intensity_modifier: [
       {
         condition: "value.label == \"penta_kill\"",
-        expression: 100,
+        intensity: 100,
+        duration: 20,
         break: true
       },
       {
         condition: "value.label == \"quadra_kill\"",
-        expression: 85,
+        intensity: 85,
+        duration: 10,
         break: true
       },
       {
-        condition: "value.label == \"double_kill\" || value.label == \"triple_kill\"",
-        expression: 70
-      }
-    ]
-    duration_modifier: [
-      {
-        condition: "value.label == \"penta_kill\"",
-        expression: 20,
+        condition: "value.label == \"triple_kill\"",
+        intensity: 70,
+        duration: 10,
         break: true
       },
       {
-        condition: "value.label == \"triple_kill\" || value.label == \"quadra_kill\"",
-        expression: 10
+        condition: "value.label == \"double_kill\"",
+        duration: 10,
+        break: true
       }
     ]
     
